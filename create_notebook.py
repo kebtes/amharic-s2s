@@ -160,7 +160,7 @@ environment_info = inspect_environment()""")
 To prevent dependency conflicts in Google Colab (such as PyTorch/CUDA driver mismatches or NumPy 2.x breaking Librosa/Numba), we install version-aligned packages without overwriting Colab's pre-configured PyTorch environment.""")
 
     add_code("""# 1. Install core ML & audio dependencies (compatible with Colab PyTorch environment)
-!pip install -q "transformers>=4.45.0,<5.0.0" "accelerate>=0.33.0" "bitsandbytes>=0.43.0" "peft>=0.12.0" soundfile "librosa>=0.10.0" scipy datasets psutil
+!pip install -q "transformers>=4.45.0,<5.0.0" "accelerate>=0.33.0" "bitsandbytes>=0.43.0" "peft>=0.12.0" torchvision torchaudio soundfile "librosa>=0.10.0" scipy datasets psutil
 
 # 2. Install OmniVoice (with git repository fallback)
 !pip install -q git+https://github.com/k2-fsa/OmniVoice.git || pip install -q omnivoice
@@ -169,7 +169,7 @@ To prevent dependency conflicts in Google Colab (such as PyTorch/CUDA driver mis
 import sys
 
 def verify_dependencies():
-    packages = ["torch", "torchaudio", "transformers", "accelerate", "bitsandbytes", "peft", "soundfile", "librosa", "scipy", "pandas", "matplotlib"]
+    packages = ["torch", "torchvision", "torchaudio", "transformers", "accelerate", "bitsandbytes", "peft", "soundfile", "librosa", "scipy", "pandas", "matplotlib"]
     print("=" * 45)
     print("DEPENDENCY VERIFICATION MATRIX")
     print("=" * 45)
@@ -254,14 +254,21 @@ print(f"✓ Model metadata recorded and saved to {model_config_file}")""")
 We load the CTC ASR model and processor, measure the cold-start loading time, and inspect GPU memory utilization.""")
 
     add_code("""import time
-from transformers import AutoProcessor, AutoModelForCTC
+from transformers import AutoModelForCTC
 
 def load_asr_model():
     print(f"Loading ASR model: {MODEL_CONFIG['asr']['model_id']}...")
     start_time = time.perf_counter()
     
     device = torch.device(MODEL_CONFIG["asr"]["device"])
-    processor = AutoProcessor.from_pretrained(MODEL_CONFIG["asr"]["model_id"])
+    
+    try:
+        from transformers import AutoProcessor
+        processor = AutoProcessor.from_pretrained(MODEL_CONFIG["asr"]["model_id"])
+    except Exception:
+        from transformers import Wav2Vec2Processor
+        processor = Wav2Vec2Processor.from_pretrained(MODEL_CONFIG["asr"]["model_id"])
+        
     model = AutoModelForCTC.from_pretrained(MODEL_CONFIG["asr"]["model_id"]).to(device)
     model.eval()
     
