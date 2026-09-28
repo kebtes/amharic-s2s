@@ -157,11 +157,10 @@ environment_info = inspect_environment()""")
     add_md("""---
 # 3. Dependency Installation
 
-We install only the strictly required libraries for HuggingFace CTC ASR, BitsAndBytes 4-bit LLM inference, and OmniVoice TTS.""")
+We install only the strictly required libraries for HuggingFace CTC ASR, BitsAndBytes 4-bit LLM inference, PEFT adapters, and OmniVoice TTS.""")
 
     add_code("""# Install required packages (Colab execution)
-# Uncomment the line below when running on a fresh Google Colab instance:
-# !pip install -q transformers accelerate bitsandbytes soundfile librosa numpy pandas matplotlib scipy datasets omnivoice psutil
+!pip install -q -U "transformers>=4.48.0" "accelerate>=0.34.0" "bitsandbytes>=0.46.1" peft soundfile librosa numpy pandas matplotlib scipy datasets omnivoice psutil
 
 import transformers
 import soundfile as sf
@@ -200,7 +199,7 @@ We record the documented metadata for each baseline model directly from their mo
         "architecture": "Gemma-2 27B Causal LM (Supervised Fine-Tuned on Amharic Alpaca)",
         "parameter_count": "~27 Billion",
         "training_data": "Amharic CPT + Amharic Alpaca instruction dataset (Addis AI)",
-        "framework": "transformers.AutoModelForCausalLM, AutoTokenizer",
+        "framework": "transformers.AutoModelForCausalLM, AutoTokenizer, peft.PeftModel",
         "quantization": "4-bit (NF4 with double quantization, bfloat16 compute dtype)",
         "device_map": "auto",
         "limitations": "27B size requires >=15GB VRAM or 4-bit quantization with CPU RAM offloading on T4 GPUs"
@@ -283,10 +282,12 @@ def load_llm_model():
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+        bnb_4bit_compute_dtype=torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16,
         bnb_4bit_use_double_quant=True,
         llm_int8_enable_fp32_cpu_offload=True
     )
+    
+    os.makedirs("llm_offload", exist_ok=True)
     
     try:
         if torch.cuda.is_available():
@@ -294,12 +295,13 @@ def load_llm_model():
                 model_id,
                 quantization_config=bnb_config,
                 device_map="auto",
-                torch_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+                dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+                offload_folder="llm_offload",
                 low_cpu_mem_usage=True
             )
         else:
             print("Warning: GPU not detected. Attempting CPU load...")
-            model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float32, low_cpu_mem_usage=True)
+            model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float32, low_cpu_mem_usage=True)
     except Exception as e:
         print(f"Error loading {model_id} in 4-bit: {e}")
         print("Falling back to lightweight compatible local mock/proxy for pipeline continuity if running in low-resource test environment.")
