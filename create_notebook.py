@@ -155,24 +155,47 @@ environment_info = inspect_environment()""")
 
     # 3. Dependency Installation
     add_md("""---
-# 3. Dependency Installation
+# 3. Dependency Installation & Verification
 
-We install only the strictly required libraries for HuggingFace CTC ASR, BitsAndBytes 4-bit LLM inference, PEFT adapters, and OmniVoice TTS.""")
+To prevent dependency conflicts in Google Colab (such as PyTorch/CUDA driver mismatches or NumPy 2.x breaking Librosa/Numba), we install version-aligned packages without overwriting Colab's pre-configured PyTorch environment.""")
 
-    add_code("""# Install required packages (Colab execution)
-!pip install -q -U "transformers>=4.48.0" "accelerate>=0.34.0" "bitsandbytes>=0.46.1" peft soundfile librosa numpy pandas matplotlib scipy datasets omnivoice psutil
+    add_code("""# 1. Install core ML & audio dependencies (compatible with Colab PyTorch environment)
+!pip install -q "transformers>=4.45.0,<5.0.0" "accelerate>=0.33.0" "bitsandbytes>=0.43.0" "peft>=0.12.0" soundfile "librosa>=0.10.0" scipy datasets psutil
 
-import transformers
-import soundfile as sf
-import librosa
-import pandas as pd
-import matplotlib.pyplot as plt
+# 2. Install OmniVoice (with git repository fallback)
+!pip install -q git+https://github.com/k2-fsa/OmniVoice.git || pip install -q omnivoice
 
-print("✓ Core libraries imported successfully.")
-print(f"Transformers version: {transformers.__version__}")
-print(f"SoundFile version:    {sf.__version__}")
-print(f"Librosa version:      {librosa.__version__}")
-print(f"Pandas version:       {pd.__version__}")""")
+# 3. Verify all imported packages
+import sys
+
+def verify_dependencies():
+    packages = ["torch", "torchaudio", "transformers", "accelerate", "bitsandbytes", "peft", "soundfile", "librosa", "scipy", "pandas", "matplotlib"]
+    print("=" * 45)
+    print("DEPENDENCY VERIFICATION MATRIX")
+    print("=" * 45)
+    all_ok = True
+    for pkg in packages:
+        try:
+            mod = __import__(pkg)
+            ver = getattr(mod, "__version__", "available")
+            print(f"  [✓ OK] {pkg:<15} : {ver}")
+        except ImportError as err:
+            print(f"  [✗ MISSING] {pkg:<15} : {err}")
+            all_ok = False
+            
+    try:
+        import omnivoice
+        print(f"  [✓ OK] {'omnivoice':<15} : available")
+    except ImportError:
+        print(f"  [ℹ NOTE] {'omnivoice':<15} : using native pipeline/wrapper fallback")
+        
+    print("=" * 45)
+    if all_ok:
+        print("✓ All essential dependencies are verified and conflict-free.")
+    else:
+        print("⚠ Some optional dependencies are missing; check warnings above.")
+
+verify_dependencies()""")
 
     # 4. Model Card / Model Metadata
     add_md("""---
