@@ -173,13 +173,25 @@ sys.modules['torchvision'] = None
 # 4. Install OmniVoice with dependency isolation
 !pip install -q --no-deps omnivoice || pip install -q --no-deps git+https://github.com/k2-fsa/OmniVoice.git
 
-# 5. Verify installed components
-import transformers
-import soundfile as sf
-import librosa
-import pandas as pd
-import matplotlib.pyplot as plt
+# 5. Optional Hugging Face authentication for gated base models
+from huggingface_hub import login
+hf_token = os.environ.get("HF_TOKEN", None)
+try:
+    from google.colab import userdata
+    hf_token = hf_token or userdata.get('HF_TOKEN')
+except Exception:
+    pass
 
+if hf_token:
+    try:
+        login(token=hf_token)
+        print("✓ Authenticated with HuggingFace Hub using HF_TOKEN.")
+    except Exception as e:
+        print(f"ℹ HuggingFace login note: {e}")
+else:
+    print("ℹ No HF_TOKEN detected. Open-access models will load directly without login.")
+
+# 6. Verify installed components
 def verify_dependencies():
     packages = ["torch", "torchaudio", "transformers", "accelerate", "bitsandbytes", "peft", "soundfile", "librosa", "scipy", "pandas", "matplotlib"]
     print("=" * 45)
@@ -226,8 +238,9 @@ We record the documented metadata for each baseline model directly from their mo
     },
     "llm": {
         "model_id": "yosefw/gemma-2-2b-it-finetuned-amharic",
+        "fallback_model_id": "Qwen/Qwen2.5-3B-Instruct",
         "architecture": "Gemma-2 2B Causal LM (Supervised Fine-Tuned for Amharic)",
-        "parameter_count": "~2.6 Billion",
+        "parameter_count": "~2.6 Billion (or 3B open fallback)",
         "training_data": "Amharic instruction-following corpus fine-tuned on Gemma-2 2B",
         "framework": "transformers.AutoModelForCausalLM, AutoTokenizer",
         "quantization": "4-bit (NF4, ~1.8GB VRAM footprint)",
@@ -298,25 +311,20 @@ asr_bundle = load_asr_model()""")
 
     # 6. Load LLM
     add_md("""---
-# 6. Load LLM (`yosefw/gemma-2-2b-it-finetuned-amharic`)
+# 6. Load LLM (`yosefw/gemma-2-2b-it-finetuned-amharic` / Open-Access Fallback)
 
-We load the Amharic fine-tuned Gemma-2 2B conversational model. With ~2.6B parameters, it loads efficiently in ~1.8 GB VRAM in 4-bit, providing low Time-To-First-Token (TTFT) and high token throughput on Colab T4.""")
+We load the Amharic conversational LLM. If `google/gemma-2-2b-it` requires gated access and no `HF_TOKEN` is supplied, it automatically falls back to the open, non-gated `Qwen/Qwen2.5-3B-Instruct` so execution proceeds seamlessly without manual login.""")
 
     add_code("""from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
 def load_llm_model():
-    model_id = MODEL_CONFIG["llm"]["model_id"]
-    print(f"Loading LLM model: {model_id}...")
+    primary_id = MODEL_CONFIG["llm"]["model_id"]
+    fallback_id = MODEL_CONFIG["llm"].get("fallback_model_id", "Qwen/Qwen2.5-3B-Instruct")
     start_time = time.perf_counter()
     
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        
     available_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3) if torch.cuda.is_available() else 0
     print(f"LLM Loading Strategy: Available VRAM = {available_vram_gb:.2f} GB")
     
-    # 4-bit Quantization configuration for low latency & small VRAM footprint
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
@@ -324,27 +332,39 @@ def load_llm_model():
         bnb_4bit_use_double_quant=True
     )
     
+    target_model_id = primary_id
     try:
+        print(f"Attempting to load primary LLM: {primary_id}...")
+        tokenizer = AutoTokenizer.from_pretrained(primary_id)
         if torch.cuda.is_available():
             model = AutoModelForCausalLM.from_pretrained(
-                model_id,
+                primary_id,
                 quantization_config=bnb_config,
                 device_map="auto",
                 dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
                 low_cpu_mem_usage=True
             )
         else:
-            print("Warning: GPU not detected. Attempting CPU load...")
-            model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float32, low_cpu_mem_usage=True)
-    except Exception as e:
-        print(f"Error loading {model_id} with 4-bit quantization: {e}")
-        print("Falling back to full float16 precision directly on GPU...")
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            device_map="auto",
-            dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            low_cpu_mem_usage=True
-        )
+            model = AutoModelForCausalLM.from_pretrained(primary_id, dtype=torch.float32, low_cpu_mem_usage=True)
+    except Exception as exc:
+        print(f"Note: Could not load {primary_id} directly ({exc}).")
+        print(f"Switching to open-access non-gated model: {fallback_id}...")
+        target_model_id = fallback_id
+        MODEL_CONFIG["llm"]["model_id"] = fallback_id
+        tokenizer = AutoTokenizer.from_pretrained(fallback_id)
+        if torch.cuda.is_available():
+            model = AutoModelForCausalLM.from_pretrained(
+                fallback_id,
+                quantization_config=bnb_config,
+                device_map="auto",
+                dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+                low_cpu_mem_usage=True
+            )
+        else:
+            model = AutoModelForCausalLM.from_pretrained(fallback_id, dtype=torch.float32, low_cpu_mem_usage=True)
+            
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
         
     model.eval()
     load_time = time.perf_counter() - start_time
@@ -355,11 +375,11 @@ def load_llm_model():
     
     print("-" * 40)
     print("LLM Model Loaded Successfully")
-    print(f"Model ID:       {model_id}")
-    print(f"Device Map:     {device_map}")
-    print(f"Cold-load time: {load_time:.2f} s")
-    print(f"VRAM Allocated: {vram_alloc:.1f} MB")
-    print(f"VRAM Reserved:  {vram_res:.1f} MB")
+    print(f"Active Model ID: {target_model_id}")
+    print(f"Device Map:      {device_map}")
+    print(f"Cold-load time:  {load_time:.2f} s")
+    print(f"VRAM Allocated:  {vram_alloc:.1f} MB")
+    print(f"VRAM Reserved:   {vram_res:.1f} MB")
     print("-" * 40)
     
     return {"tokenizer": tokenizer, "model": model, "device_map": device_map, "cold_load_time": load_time}
