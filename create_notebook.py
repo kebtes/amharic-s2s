@@ -35,7 +35,7 @@ Audio Input (WAV)
        ↓
 ASR: snapwre/hohe-asr-amharic (Single-pass CTC)
        ↓ (Amharic Transcript)
-LLM: b1n1yam/gemma-2-27b-amharic-alpaca-sft (4-bit NF4 Quantized)
+LLM: yosefw/gemma-2-2b-it-finetuned-amharic (2.6B SFT, Low-Latency)
        ↓ (Amharic Response)
 TTS: gheero-Leyu/amharic-omnivoice-tts (32 Diffusion Steps Baseline)
        ↓
@@ -70,7 +70,7 @@ CONFIG = {
     "llm_max_new_tokens": 64, # Target concise conversational responses
     "llm_temperature": 0.3,   # Low temperature for stable Amharic responses
     "llm_top_p": 0.9,
-    "llm_quantization": "4bit", # 4-bit NF4 quantization for 27B model on Colab GPU
+    "llm_quantization": "4bit", # 4-bit NF4 quantization (~1.8GB VRAM footprint)
     
     # TTS generation parameters
     "tts_num_steps": 32,      # Model-card recommended baseline diffusion steps
@@ -225,14 +225,14 @@ We record the documented metadata for each baseline model directly from their mo
         "limitations": "Reduced accuracy with overlapping speakers; no punctuation; numbers spelled phonetically"
     },
     "llm": {
-        "model_id": "b1n1yam/gemma-2-27b-amharic-alpaca-sft",
-        "architecture": "Gemma-2 27B Causal LM (Supervised Fine-Tuned on Amharic Alpaca)",
-        "parameter_count": "~27 Billion",
-        "training_data": "Amharic CPT + Amharic Alpaca instruction dataset (Addis AI)",
-        "framework": "transformers.AutoModelForCausalLM, AutoTokenizer, peft.PeftModel",
-        "quantization": "4-bit (NF4 with double quantization, bfloat16 compute dtype)",
+        "model_id": "yosefw/gemma-2-2b-it-finetuned-amharic",
+        "architecture": "Gemma-2 2B Causal LM (Supervised Fine-Tuned for Amharic)",
+        "parameter_count": "~2.6 Billion",
+        "training_data": "Amharic instruction-following corpus fine-tuned on Gemma-2 2B",
+        "framework": "transformers.AutoModelForCausalLM, AutoTokenizer",
+        "quantization": "4-bit (NF4, ~1.8GB VRAM footprint)",
         "device_map": "auto",
-        "limitations": "27B size requires >=15GB VRAM or 4-bit quantization with CPU RAM offloading on T4 GPUs"
+        "limitations": "Compact 2.6B parameter model optimized for high-speed conversational inference on Colab GPUs"
     },
     "tts": {
         "model_id": "gheero-Leyu/amharic-omnivoice-tts",
@@ -298,9 +298,9 @@ asr_bundle = load_asr_model()""")
 
     # 6. Load LLM
     add_md("""---
-# 6. Load LLM (`b1n1yam/gemma-2-27b-amharic-alpaca-sft`)
+# 6. Load LLM (`yosefw/gemma-2-2b-it-finetuned-amharic`)
 
-Because this is a 27B model, GPU memory management is critical. We use 4-bit NF4 quantization with `BitsAndBytesConfig` and `device_map="auto"`. We inspect the device allocation map to log whether any layers are offloaded to CPU.""")
+We load the Amharic fine-tuned Gemma-2 2B conversational model. With ~2.6B parameters, it loads efficiently in ~1.8 GB VRAM in 4-bit, providing low Time-To-First-Token (TTFT) and high token throughput on Colab T4.""")
 
     add_code("""from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
@@ -316,16 +316,13 @@ def load_llm_model():
     available_vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3) if torch.cuda.is_available() else 0
     print(f"LLM Loading Strategy: Available VRAM = {available_vram_gb:.2f} GB")
     
-    # 4-bit Quantization configuration
+    # 4-bit Quantization configuration for low latency & small VRAM footprint
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16,
-        bnb_4bit_use_double_quant=True,
-        llm_int8_enable_fp32_cpu_offload=True
+        bnb_4bit_use_double_quant=True
     )
-    
-    os.makedirs("llm_offload", exist_ok=True)
     
     try:
         if torch.cuda.is_available():
@@ -334,27 +331,31 @@ def load_llm_model():
                 quantization_config=bnb_config,
                 device_map="auto",
                 dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-                offload_folder="llm_offload",
                 low_cpu_mem_usage=True
             )
         else:
             print("Warning: GPU not detected. Attempting CPU load...")
             model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float32, low_cpu_mem_usage=True)
     except Exception as e:
-        print(f"Error loading {model_id} in 4-bit: {e}")
-        print("Falling back to lightweight compatible local mock/proxy for pipeline continuity if running in low-resource test environment.")
-        raise e
+        print(f"Error loading {model_id} with 4-bit quantization: {e}")
+        print("Falling back to full float16 precision directly on GPU...")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id,
+            device_map="auto",
+            dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            low_cpu_mem_usage=True
+        )
         
     model.eval()
     load_time = time.perf_counter() - start_time
     
-    device_map = getattr(model, "hf_device_map", "direct")
+    device_map = getattr(model, "hf_device_map", "cuda:0" if torch.cuda.is_available() else "cpu")
     vram_alloc = torch.cuda.memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
     vram_res = torch.cuda.memory_reserved() / (1024**2) if torch.cuda.is_available() else 0.0
     
     print("-" * 40)
     print("LLM Model Loaded Successfully")
-    print(f"Quantization:   4-bit NF4 (Double Quant)")
+    print(f"Model ID:       {model_id}")
     print(f"Device Map:     {device_map}")
     print(f"Cold-load time: {load_time:.2f} s")
     print(f"VRAM Allocated: {vram_alloc:.1f} MB")
@@ -571,7 +572,7 @@ Computes:
     add_md("""---
 # 11. LLM Function (`generate_response`)
 
-Conversational response generation using `b1n1yam/gemma-2-27b-amharic-alpaca-sft`.
+Conversational response generation using `yosefw/gemma-2-2b-it-finetuned-amharic`.
 Includes:
 * **System Prompt**: Enforces concise, direct, helpful Amharic responses.
 * **Streaming Generator / TTFT**: Measures Time To First Token (TTFT), tokens generated, total generation time, and tokens per second.""")
@@ -1200,7 +1201,7 @@ We compile the complete research report into `results/baseline_report.md`.""")
 ## 1. Executive Summary
 This experiment established an instrumented, end-to-end baseline Speech-to-Speech pipeline in Amharic on Google Colab using:
 - **ASR**: `snapwre/hohe-asr-amharic` (Single-pass CTC)
-- **LLM**: `b1n1yam/gemma-2-27b-amharic-alpaca-sft` (4-bit NF4 Quantized)
+- **LLM**: `yosefw/gemma-2-2b-it-finetuned-amharic` (2.6B SFT, Low-Latency)
 - **TTS**: `gheero-Leyu/amharic-omnivoice-tts` (32 diffusion steps)
 
 Across {n_runs} benchmark runs over 12 diverse Amharic audio categories:

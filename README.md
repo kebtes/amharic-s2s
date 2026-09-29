@@ -9,7 +9,7 @@ This repository contains the complete Google Colab research baseline notebook fo
        ↓
 [ASR] snapwre/hohe-asr-amharic (Single-pass CTC)
        ↓ Amharic Transcript
-[LLM] b1n1yam/gemma-2-27b-amharic-alpaca-sft (4-bit NF4 Quantized)
+[LLM] yosefw/gemma-2-2b-it-finetuned-amharic (2.6B SFT, Low-Latency)
        ↓ Amharic Response
 [TTS] gheero-Leyu/amharic-omnivoice-tts (32 Diffusion Steps)
        ↓
