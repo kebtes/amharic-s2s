@@ -1,0 +1,14 @@
+pipecat-ai>=0.0.40
+torch>=2.2.0
+torchaudio>=2.2.0
+transformers>=4.40.0
+accelerate>=0.28.0
+bitsandbytes>=0.43.0
+soundfile>=0.12.1
+numpy>=1.24.0
+scipy>=1.11.0
+silero-vad>=5.1.2
+pyaudio>=0.2.14
+aiohttp>=3.9.0
+loguru>=0.7.0
+python-dotenv>=1.0.0

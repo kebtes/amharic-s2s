@@ -1,45 +1,101 @@
-# Amharic Speech-to-Speech Baseline Research Pipeline
+# 🇪🇹 Amharic Speech-to-Speech (S2S) Pipeline with Pipecat
 
-This repository contains the complete Google Colab research baseline notebook for measuring and optimizing end-to-end latency in an Amharic Speech-to-Speech (ASR → LLM → TTS) pipeline.
+A modular, real-time, bidirectional conversational voice agent for Amharic built with **[Pipecat](https://github.com/pipecat-ai/pipecat)**, Hugging Face Transformers, and OmniVoice.
 
-## Baseline Pipeline Architecture
+---
+
+## 🏗️ Architecture
 
 ```
-[Audio Input] (WAV)
-       ↓
-[ASR] snapwre/hohe-asr-amharic (Single-pass CTC)
-       ↓ Amharic Transcript
-[LLM] yosefw/gemma-2-2b-it-finetuned-amharic (2.6B SFT, Low-Latency)
-       ↓ Amharic Response
-[TTS] gheero-Leyu/amharic-omnivoice-tts (32 Diffusion Steps)
-       ↓
-[Audio Output] (24 kHz WAV)
+[ User Mic / WebRTC / Audio File ]
+               ↓
+    [ Silero VAD / User Mute ]
+               ↓
+[ AmharicSTTService: snapwre/hohe-asr-amharic (CTC ASR) ]
+               ↓ Amharic Transcript Frame
+[ AmharicLLMService: yosefw/gemma-2-2b-it-finetuned-amharic (4-bit Streaming LLM) ]
+               ↓ Streamed Token Frames
+[ AmharicSentenceAggregator: Boundary Chunking (።, ?, !, \n) ]
+               ↓ Sentence Text Frames
+[ AmharicTTSService: gheero-Leyu/amharic-omnivoice-tts (Streaming PCM) ]
+               ↓ 24 kHz PCM Audio Frames
+[ WebRTC / Speaker Playback Output ]
 ```
 
-## Primary Deliverable
+---
 
-* **[`Amharic_S2S_Baseline.ipynb`](file:///c:/Users/CompUser/Documents/VSCode%20files/gheero/amharic-s2s/Amharic_S2S_Baseline.ipynb)**: Executable Google Colab research notebook with 22 structured sections.
-
-## Quickstart in Google Colab
-
-1. Open [Google Colab](https://colab.research.google.com/).
-2. Upload `Amharic_S2S_Baseline.ipynb`.
-3. Select **Runtime → Change runtime type → T4 GPU** (or A100/L4 GPU).
-4. Run all cells from top to bottom (**Runtime → Run all**).
-
-## Output Artifacts
-
-Running the notebook automatically generates the following structured research directory:
+## 📁 Project Structure
 
 ```text
-results/
-├── raw_runs.jsonl          # Raw per-run structured timing records
-├── summary.json            # Descriptive statistics (Mean, Median, Std, Min, Max, P90)
-├── environment.json        # Hardware, VRAM, and library versions
-├── model_config.json       # Documented model card metadata
-├── benchmark_config.json   # 12-sample test dataset definitions
-├── baseline_report.md      # Comprehensive research report
-├── generated_audio/        # Synthesized output WAV files
-└── figures/
-    └── latency_breakdown.png  # 4-panel latency breakdown & distribution plots
+amharic-s2s/
+├── src/
+│   └── amharic_s2s/
+│       ├── __init__.py               # Package exports
+│       ├── config.py                 # Hyperparameters & model configurations
+│       ├── audio_utils.py            # Audio format conversions & resampling
+│       ├── models/
+│       │   ├── __init__.py
+│       │   └── loader.py             # Model loaders (ASR, LLM, TTS) & VRAM tracking
+│       ├── services/                 # Pipecat AI Service classes
+│       │   ├── __init__.py
+│       │   ├── stt_service.py        # AmharicSTTService (CTC ASR)
+│       │   ├── llm_service.py        # AmharicLLMService (Streaming Gemma-2B)
+│       │   └── tts_service.py        # AmharicTTSService (OmniVoice TTS)
+│       └── pipeline/
+│           ├── __init__.py
+│           ├── builder.py            # Pipecat pipeline assembler & sentence aggregator
+│           └── runner.py             # Interactive & benchmark runners
+├── notebooks/
+│   └── Amharic_S2S_Pipecat.ipynb     # Lightweight notebook for loading & testing
+├── scripts/
+│   ├── run_local.py                  # Live microphone/speaker CLI runner
+│   └── benchmark_pipeline.py         # Automated TTFT, TTFA, and latency benchmarks
+├── pyproject.toml                    # Package build & dependencies
+├── requirements.txt                  # PIP requirements
+└── README.md                         # Documentation
+```
+
+---
+
+## 🚀 Quickstart
+
+### 1. Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/kebtes/amharic-s2s.git
+cd amharic-s2s
+
+# Install dependencies and package in editable mode
+pip install -e .
+```
+
+### 2. Run Interactive Live Voice Assistant (Mic & Speaker)
+
+```bash
+python scripts/run_local.py
+```
+
+### 3. Run Pipeline Latency Benchmark
+
+```bash
+python scripts/benchmark_pipeline.py
+```
+
+---
+
+## 📓 Running in Google Colab / Jupyter
+
+Open [`notebooks/Amharic_S2S_Pipecat.ipynb`](file:///c:/Users/CompUser/Documents/VSCode%20files/gheero/amharic-s2s/notebooks/Amharic_S2S_Pipecat.ipynb) (or [`Amharic_S2S_Pipecat.ipynb`](file:///c:/Users/CompUser/Documents/VSCode%20files/gheero/amharic-s2s/Amharic_S2S_Pipecat.ipynb)) in Google Colab. The notebook is purely a **thin loading harness**:
+
+```python
+from amharic_s2s import load_all_models, default_config
+from amharic_s2s.pipeline.runner import run_pipeline_with_audio_file
+
+# 1. Load models
+bundle = load_all_models(default_config)
+
+# 2. Run streamed S2S with audio
+res = await run_pipeline_with_audio_file(bundle, "sample.wav")
+print("Response:", res["llm_response"])
 ```

@@ -7,6 +7,12 @@ __pycache__/
 env/
 venv/
 .venv/
+*.egg-info/
+build/
+dist/
+
+# Results & outputs
+results/
 
 # Jupyter
 .ipynb_checkpoints/
@@ -14,3 +20,4 @@ venv/
 # Operating System
 .DS_Store
 Thumbs.db
+
