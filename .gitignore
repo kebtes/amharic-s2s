@@ -14,3 +14,7 @@ venv/
 # Operating System
 .DS_Store
 Thumbs.db
+
+# Generated RAG vector index & evaluation results
+vector_store/
+results/
