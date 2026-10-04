@@ -1,68 +1,86 @@
-# Amharic Speech-to-Speech Baseline Research Pipeline
+# Amharic Bank Voice Assistant
 
-This repository contains the complete Google Colab research baseline notebook for measuring and optimizing end-to-end latency in an Amharic Speech-to-Speech (ASR → LLM → TTS) pipeline.
+A low-latency, fully open-source voice assistant that answers customer questions in **Amharic**, using a bank's own documents as its knowledge base.
 
-## Baseline Pipeline Architecture
+You speak Amharic, and it answers out loud, only from the bank's documents. If the answer is not in the documents, it says so instead of inventing one.
 
 ```
-[Audio Input] (WAV)
-       ↓
-[ASR] snapwre/hohe-asr-amharic (Single-pass CTC)
-       ↓ Amharic Transcript
-[RAG Engine] AmharicBankRAG (Hybrid FAISS + BM25, < 15ms Latency)
-       ↓ Grounded Amharic Prompt & Bank Context
-[LLM] yosefw/gemma-2-2b-it-finetuned-amharic (2.6B SFT, Low-Latency)
-       ↓ Amharic Response
-[TTS] gheero-Leyu/amharic-omnivoice-tts (32 Diffusion Steps)
-       ↓
-[Audio Output] (24 kHz WAV)
+mic → ASR → RAG retrieval → LLM → TTS → spoken answer
 ```
 
-## Amharic Bank RAG System
+## How it works
 
-The RAG module (`rag/`) indexes **82 banking documents** (44 FAQ documents and 38 general text guides) to provide low-latency, grounded knowledge retrieval for bank domain queries.
+| Stage | Component | Model / library |
+|---|---|---|
+| Speech to text | Amharic ASR | `snapwre/hohe-asr-amharic` |
+| Retrieval | Dense embeddings + cosine search | `BAAI/bge-m3` (numpy, no vector DB) |
+| Answer generation | Local LLM, streamed | Gemma 4 E4B, `Q4_K_M` GGUF, served by `llama.cpp` |
+| Text to speech | Amharic TTS | `gheero-Leyu/amharic-omnivoice-tts` (fallback: `african-low-resource/omnivoice-amharic`) |
+| Demo UI | Browser microphone page | Gradio |
 
-### Quickstart for RAG System
+Design choices that keep latency low:
 
-1. **Build Vector Store Index**:
-   ```bash
-   python rag/build_index.py
-   ```
-2. **Run Latency & Retrieval Benchmarks**:
-   ```bash
-   python rag/eval_rag.py
-   ```
-3. **Start FastAPI Service**:
-   ```bash
-   python rag/server.py
-   ```
-4. **Detailed Integration & Handoff Docs**: See [`HANDOFF_RAG.md`](file:///home/vini/01-projects/work-01-gheero-projects/phase-2/amharic-s2s/amharic-s2s/HANDOFF_RAG.md) for full Python API and REST endpoint details.
+- The LLM runs in `llama.cpp` with a 4-bit model on one GPU, with thinking mode switched off.
+- The LLM streams its answer, and the first complete clause (ending in `።`) is sent to TTS without waiting for the rest.
+- TTS uses 8 diffusion steps (`NUM_STEP = 8`), chosen after comparing 32, 16 and 8 by ear.
+- LLM runs on GPU 0, ASR and TTS on GPU 1, so the stages do not compete.
+- Document embeddings are computed once; only the question is embedded at run time. Retrieval is capped at 2 short chunks to keep prompts small.
+- TTS uses a fixed reference voice so the speaker does not change between sentences.
 
-## Primary Deliverables
+## Measured results (Kaggle, 2x T4)
 
-* **[`Amharic_S2S_Baseline.ipynb`](file:///c:/Users/CompUser/Documents/VSCode%20files/gheero/amharic-s2s/Amharic_S2S_Baseline.ipynb)**: Executable Google Colab research notebook.
-* **[`HANDOFF_RAG.md`](file:///home/vini/01-projects/work-01-gheero-projects/phase-2/amharic-s2s/amharic-s2s/HANDOFF_RAG.md)**: Teammate handoff documentation for RAG S2S integration.
+| Measurement | Result |
+|---|---|
+| LLM generation speed (`llama-bench`, `tg64`) | about 53 tokens/s |
+| LLM time to first spoken clause | about 0.3 to 0.5 s |
+| ASR, short utterance | about 0.1 to 0.4 s |
+| TTS, one short sentence at 32 steps | about 1.4 s (8 steps is faster; see the notebook) |
 
-## Quickstart in Google Colab
+These numbers are per stage and come from a notebook that runs the stages one after another. The "estimated time to first audio" printed by the demo adds them up as if they were pipelined. It does **not** include the end-of-speech wait, browser upload or playback buffering, and it has not yet been measured in a real streaming pipeline.
 
-1. Open [Google Colab](https://colab.research.google.com/).
-2. Upload `Amharic_S2S_Baseline.ipynb`.
-3. Select **Runtime → Change runtime type → T4 GPU** (or A100/L4 GPU).
-4. Run all cells from top to bottom (**Runtime → Run all**).
+## Requirements
 
-## Output Artifacts
+- Kaggle notebook with **GPU T4 x2** and **Internet on**
+- Kaggle secret `HF_TOKEN` (Add-ons, then Secrets), needed if any model is gated
+- Input dataset `bank-docs` containing `.docx` files, ideally in `faq/` and `general/` folders (category is taken from the path; anything with "faq" in it is treated as FAQ)
 
-Running the notebook automatically generates the following structured research directory:
+## Running it
 
-```text
-results/
-├── raw_runs.jsonl          # Raw per-run structured timing records
-├── summary.json            # Descriptive statistics (Mean, Median, Std, Min, Max, P90)
-├── environment.json        # Hardware, VRAM, and library versions
-├── model_config.json       # Documented model card metadata
-├── benchmark_config.json   # 12-sample test dataset definitions
-├── baseline_report.md      # Comprehensive research report
-├── generated_audio/        # Synthesized output WAV files
-└── figures/
-    └── latency_breakdown.png  # 4-panel latency breakdown & distribution plots
-```
+Open `amharic_bank_assistant_clean.ipynb` and run the sections **in order, top to bottom**, once per fresh session:
+
+1. **Section A:** builds `llama.cpp` (about 30 min the first time, skipped if already built), downloads the model, starts the LLM server on port 8080.
+2. **Section B:** loads ASR and TTS.
+3. **Section C (optional):** compares TTS step counts.
+4. **Section D:** extracts the bank `.docx` files and splits them into chunks.
+5. **Section E:** embeds the chunks with BGE-M3 and defines `retrieve()`.
+6. **Section F:** RAG prompt and answer function, plus a text-only check.
+7. **Section G:** launches the Gradio voice demo. Open the printed `gradio.live` link **in a new browser tab** so the microphone permission prompt appears, speak Amharic, and press **Stop**.
+8. **Section H (optional):** exposes ASR and TTS as OpenAI-compatible endpoints (`/v1/audio/transcriptions`, `/v1/audio/speech`) for use with Pipecat.
+
+Stop the Gradio cell when you are done: anyone with the public link can use it while it is running.
+
+## Known limitations
+
+- Answers are only as good as the documents. Headings or question-style lines are used to split documents; files without headings become one large chunk.
+- Tables inside `.docx` files are only read when a document has no paragraph text.
+- The demo has no voice activity detection: you press Stop to end your turn.
+- ASR output can include a language tag such as `[AMH]`, which the notebook strips.
+- https://github.com/kebtes/amharic-s2s/pull/3/conflict?name=create_notebook.py&ancestor_oid=afc0e4c34c39a989e4f72a12175e417b897c8ce5&base_oid=f96b6197658914453c8bb1331124f648e23a15e7&head_oid=ac6f48aa265c6b00315d097820073d52c7e541dcAmharic quality (ASR, answers and voice) has been checked informally, not with a formal test set.
+
+## Roadmap
+
+- [ ] Real streaming pipeline with [Pipecat](https://github.com/pipecat-ai/pipecat) (VAD, interruption handling, stage overlap)
+- [ ] Measure end-to-end latency including end-of-speech detection
+- [ ] Measure the extra delay from long retrieved context
+- [ ] Evaluate answer accuracy on a set of real bank questions
+- [ ] Run on a dedicated GPU server and add a web widget
+
+## Repository notes
+
+- Do not commit secrets, the `.gguf` model, `llama_bin.tar.gz` or the embeddings `.npy` file; add them to `.gitignore`.
+- Clear notebook outputs before committing, since they can contain public demo links.
+- Check that the bank documents are allowed in a public repository.
+
+## Licenses
+
+Each model has its own license; check the model cards before any commercial use. Pipecat is BSD-2-Clause, and `llama.cpp` and BGE-M3 are MIT-licensed. Add your own license for this repository's code here.
