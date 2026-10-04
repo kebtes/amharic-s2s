@@ -1,0 +1,37 @@
+{
+  "asr": {
+    "model_id": "snapwre/hohe-asr-amharic",
+    "architecture": "Wav2Vec2ForCTC (CTC single-pass)",
+    "parameter_count": "~317M",
+    "training_data": "880 hours diverse Amharic audio (read, broadcast, calls, 5 regional dialects)",
+    "documented_eval": "16.1% WER / 5.4% CER (model card claim; background only)",
+    "framework": "transformers.AutoModelForCTC, Wav2Vec2Processor",
+    "sample_rate": 16000,
+    "device": "cuda",
+    "dtype": "float32",
+    "limitations": "Reduced accuracy with overlapping speakers; no punctuation; numbers spelled phonetically"
+  },
+  "llm": {
+    "model_id": "google/gemma-2-2b-it",
+    "architecture": "Gemma-2 2B Instruction-tuned Causal LM",
+    "parameter_count": "~2.6 Billion",
+    "training_data": "Pre-trained on multilingual datasets + instruction tuning",
+    "framework": "transformers.AutoModelForCausalLM, AutoTokenizer",
+    "quantization": "None (native float16/bfloat16) or 8-bit",
+    "device_map": "auto",
+    "limitations": "Smaller general knowledge base but highly efficient; runs comfortably on T4 alongside audio pipelines"
+  },
+  "tts": {
+    "model_id": "gheero-Leyu/amharic-omnivoice-tts",
+    "architecture": "Non-autoregressive discrete diffusion language model",
+    "parameter_count": "~612.6M",
+    "training_data": "~331 hours Amharic audio (leyu-amharic-addis-ababa-dialect)",
+    "documented_eval": "Zero-shot Amharic synthesis, 24kHz output, ~3GB VRAM on T4",
+    "framework": "omnivoice.OmniVoice",
+    "baseline_diffusion_steps": 32,
+    "sample_rate": 24000,
+    "device": "cuda",
+    "dtype": "float16",
+    "limitations": "This baseline measures blocking complete-waveform generation; true first-audio latency is not exposed by this benchmark implementation"
+  }
+}

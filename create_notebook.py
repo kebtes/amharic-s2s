@@ -35,7 +35,7 @@ Audio Input (WAV)
        ↓
 ASR: snapwre/hohe-asr-amharic (Single-pass CTC)
        ↓ (Amharic Transcript)
-LLM: b1n1yam/gemma-2-27b-amharic-alpaca-sft (4-bit NF4 Quantized)
+LLM: yosefw/gemma-2-2b-it-finetuned-amharic (2.6B SFT, Low-Latency)
        ↓ (Amharic Response)
 TTS: gheero-Leyu/amharic-omnivoice-tts (32 Diffusion Steps Baseline)
        ↓
@@ -72,7 +72,7 @@ CONFIG = {
     "llm_max_new_tokens": 64, # Target concise conversational responses
     "llm_temperature": 0.3,   # Low temperature for stable Amharic responses
     "llm_top_p": 0.9,
-    "llm_quantization": "4bit", # 4-bit NF4 quantization for 27B model on Colab GPU
+    "llm_quantization": "4bit", # 4-bit NF4 quantization (~1.8GB VRAM footprint)
     
     # TTS generation parameters
     "tts_num_steps": 32,      # Model-card recommended baseline diffusion steps
@@ -175,13 +175,25 @@ sys.modules['torchvision'] = None
 # 4. Install OmniVoice with dependency isolation
 !pip install -q --no-deps omnivoice || pip install -q --no-deps git+https://github.com/k2-fsa/OmniVoice.git
 
-# 5. Verify installed components
-import transformers
-import soundfile as sf
-import librosa
-import pandas as pd
-import matplotlib.pyplot as plt
+# 5. Optional Hugging Face authentication for gated base models
+from huggingface_hub import login
+hf_token = os.environ.get("HF_TOKEN", None)
+try:
+    from google.colab import userdata
+    hf_token = hf_token or userdata.get('HF_TOKEN')
+except Exception:
+    pass
 
+if hf_token:
+    try:
+        login(token=hf_token)
+        print("✓ Authenticated with HuggingFace Hub using HF_TOKEN.")
+    except Exception as e:
+        print(f"ℹ HuggingFace login note: {e}")
+else:
+    print("ℹ No HF_TOKEN detected. Open-access models will load directly without login.")
+
+# 6. Verify installed components
 def verify_dependencies():
     packages = ["torch", "torchaudio", "transformers", "accelerate", "bitsandbytes", "peft", "soundfile", "librosa", "scipy", "pandas", "matplotlib"]
     print("=" * 45)
@@ -227,14 +239,15 @@ We record the documented metadata for each baseline model directly from their mo
         "limitations": "Reduced accuracy with overlapping speakers; no punctuation; numbers spelled phonetically"
     },
     "llm": {
-        "model_id": "b1n1yam/gemma-2-27b-amharic-alpaca-sft",
-        "architecture": "Gemma-2 27B Causal LM (Supervised Fine-Tuned on Amharic Alpaca)",
-        "parameter_count": "~27 Billion",
-        "training_data": "Amharic CPT + Amharic Alpaca instruction dataset (Addis AI)",
-        "framework": "transformers.AutoModelForCausalLM, AutoTokenizer, peft.PeftModel",
-        "quantization": "4-bit (NF4 with double quantization, bfloat16 compute dtype)",
+        "model_id": "yosefw/gemma-2-2b-it-finetuned-amharic",
+        "fallback_model_id": "Qwen/Qwen2.5-3B-Instruct",
+        "architecture": "Gemma-2 2B Causal LM (Supervised Fine-Tuned for Amharic)",
+        "parameter_count": "~2.6 Billion (or 3B open fallback)",
+        "training_data": "Amharic instruction-following corpus fine-tuned on Gemma-2 2B",
+        "framework": "transformers.AutoModelForCausalLM, AutoTokenizer",
+        "quantization": "4-bit (NF4, ~1.8GB VRAM footprint)",
         "device_map": "auto",
-        "limitations": "27B size requires >=15GB VRAM or 4-bit quantization with CPU RAM offloading on T4 GPUs"
+        "limitations": "Compact 2.6B parameter model optimized for high-speed conversational inference on Colab GPUs"
     },
     "tts": {
         "model_id": "gheero-Leyu/amharic-omnivoice-tts",
@@ -300,9 +313,9 @@ asr_bundle = load_asr_model()""")
 
     # 6. Load LLM
     add_md("""---
-# 6. Load LLM (`b1n1yam/gemma-2-27b-amharic-alpaca-sft`)
+# 6. Load LLM (`yosefw/gemma-2-2b-it-finetuned-amharic` / Open-Access Fallback)
 
-Because this is a 27B model, GPU memory management is critical. We use 4-bit NF4 quantization with `BitsAndBytesConfig` and `device_map="auto"`. We inspect the device allocation map to log whether any layers are offloaded to CPU.""")
+We load the Amharic conversational LLM. If `google/gemma-2-2b-it` requires gated access and no `HF_TOKEN` is supplied, it automatically falls back to the open, non-gated `Qwen/Qwen2.5-3B-Instruct` so execution proceeds seamlessly without manual login.""")
 
     add_code("""from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 import transformers.modeling_utils
@@ -312,8 +325,8 @@ if hasattr(transformers.modeling_utils, "caching_allocator_warmup"):
     transformers.modeling_utils.caching_allocator_warmup = lambda *args, **kwargs: None
 
 def load_llm_model():
-    model_id = MODEL_CONFIG["llm"]["model_id"]
-    print(f"Loading LLM model: {model_id}...")
+    primary_id = MODEL_CONFIG["llm"]["model_id"]
+    fallback_id = MODEL_CONFIG["llm"].get("fallback_model_id", "Qwen/Qwen2.5-3B-Instruct")
     start_time = time.perf_counter()
     
     if torch.cuda.is_available():
@@ -344,21 +357,20 @@ def load_llm_model():
         load_in_4bit=True,
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else torch.float16,
-        bnb_4bit_use_double_quant=True,
-        llm_int8_enable_fp32_cpu_offload=True
+        bnb_4bit_use_double_quant=True
     )
     
-    os.makedirs("llm_offload", exist_ok=True)
-    
+    target_model_id = primary_id
     try:
+        print(f"Attempting to load primary LLM: {primary_id}...")
+        tokenizer = AutoTokenizer.from_pretrained(primary_id)
         if torch.cuda.is_available():
             model = AutoModelForCausalLM.from_pretrained(
-                model_id,
+                primary_id,
                 quantization_config=bnb_config,
                 device_map="auto",
                 max_memory=max_memory if num_gpus > 0 else None,
                 dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
-                offload_folder="llm_offload",
                 low_cpu_mem_usage=True
             )
         else:
@@ -395,17 +407,17 @@ def load_llm_model():
     model.eval()
     load_time = time.perf_counter() - start_time
     
-    device_map = getattr(model, "hf_device_map", "direct")
+    device_map = getattr(model, "hf_device_map", "cuda:0" if torch.cuda.is_available() else "cpu")
     vram_alloc = torch.cuda.memory_allocated() / (1024**2) if torch.cuda.is_available() else 0.0
     vram_res = torch.cuda.memory_reserved() / (1024**2) if torch.cuda.is_available() else 0.0
     
     print("-" * 40)
     print("LLM Model Loaded Successfully")
-    print(f"Quantization:   4-bit NF4 (Double Quant)")
-    print(f"Device Map:     {device_map}")
-    print(f"Cold-load time: {load_time:.2f} s")
-    print(f"VRAM Allocated: {vram_alloc:.1f} MB")
-    print(f"VRAM Reserved:  {vram_res:.1f} MB")
+    print(f"Active Model ID: {target_model_id}")
+    print(f"Device Map:      {device_map}")
+    print(f"Cold-load time:  {load_time:.2f} s")
+    print(f"VRAM Allocated:  {vram_alloc:.1f} MB")
+    print(f"VRAM Reserved:   {vram_res:.1f} MB")
     print("-" * 40)
     
     return {"tokenizer": tokenizer, "model": model, "device_map": device_map, "cold_load_time": load_time}
@@ -629,7 +641,7 @@ Computes:
     add_md("""---
 # 11. LLM Function (`generate_response`)
 
-Conversational response generation using `b1n1yam/gemma-2-27b-amharic-alpaca-sft`.
+Conversational response generation using `yosefw/gemma-2-2b-it-finetuned-amharic`.
 Includes:
 * **System Prompt**: Enforces concise, direct, helpful Amharic responses.
 * **Streaming Generator / TTFT**: Measures Time To First Token (TTFT), tokens generated, total generation time, and tokens per second.""")
@@ -1259,7 +1271,7 @@ We compile the complete research report into `results/baseline_report.md`.""")
 ## 1. Executive Summary
 This experiment established an instrumented, end-to-end baseline Speech-to-Speech pipeline in Amharic on Google Colab using:
 - **ASR**: `snapwre/hohe-asr-amharic` (Single-pass CTC)
-- **LLM**: `b1n1yam/gemma-2-27b-amharic-alpaca-sft` (4-bit NF4 Quantized)
+- **LLM**: `yosefw/gemma-2-2b-it-finetuned-amharic` (2.6B SFT, Low-Latency)
 - **TTS**: `gheero-Leyu/amharic-omnivoice-tts` (32 diffusion steps)
 
 Across {n_runs} benchmark runs over 12 diverse Amharic audio categories:

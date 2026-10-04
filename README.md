@@ -65,7 +65,7 @@ Stop the Gradio cell when you are done: anyone with the public link can use it w
 - Tables inside `.docx` files are only read when a document has no paragraph text.
 - The demo has no voice activity detection: you press Stop to end your turn.
 - ASR output can include a language tag such as `[AMH]`, which the notebook strips.
-- Amharic quality (ASR, answers and voice) has been checked informally, not with a formal test set.
+- https://github.com/kebtes/amharic-s2s/pull/3/conflict?name=create_notebook.py&ancestor_oid=afc0e4c34c39a989e4f72a12175e417b897c8ce5&base_oid=f96b6197658914453c8bb1331124f648e23a15e7&head_oid=ac6f48aa265c6b00315d097820073d52c7e541dcAmharic quality (ASR, answers and voice) has been checked informally, not with a formal test set.
 
 ## Roadmap
 

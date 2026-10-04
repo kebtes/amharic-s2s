@@ -1,0 +1,13 @@
+sample_id,source_index,speaker_id,gender,duration_sec,reference_available
+sample_01,4,392,female,41.275,True
+sample_02,6,430,male,37.554,True
+sample_03,9,688,female,50.794,True
+sample_04,30,868,male,51.914,True
+sample_05,32,688,female,45.834,True
+sample_06,48,928,female,51.914,True
+sample_07,49,928,female,47.594,True
+sample_08,57,816,male,40.675,True
+sample_09,63,394,male,42.395,True
+sample_10,66,394,male,38.315,True
+sample_11,68,414,male,41.675,True
+sample_12,77,413,male,45.114,True
